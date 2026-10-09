@@ -28,6 +28,61 @@ npm run dashboard:live
 
 To remove the hooks: `node scripts/agent-live-install.js --remove`.
 
+### Cursor
+
+The same tracker and dashboard also watch Cursor agent sessions. Install the
+Cursor hooks (written to `~/.cursor/hooks.json`, backup kept), restart Cursor,
+then use the Agent panel as usual:
+
+```bash
+node scripts/agent-live-install.js --cursor            # dry run
+node scripts/agent-live-install.js --cursor --write    # merge
+node scripts/agent-live-install.js --cursor --remove   # undo
+```
+
+Every event carries a `harness` field (`claude` or `cursor`) and the UI shows
+it in the header chip, the session dropdown and the main-session card, so you
+always know which tool is running. Cursor sessions use `conversation_id` as the
+session id, `workspace_roots[0]` as the cwd and keep the `model` when Cursor
+sends it.
+
+| Cursor event | Stored as |
+|--------------|-----------|
+| sessionStart / sessionEnd | `session_start` / `session_end` |
+| beforeSubmitPrompt | `prompt` |
+| beforeShellExecution / afterShellExecution | `tool_start` / `tool_end` (`Bash`) |
+| beforeMCPExecution / afterMCPExecution | `tool_start` / `tool_end` (`mcp:<tool>`) |
+| beforeReadFile, afterFileEdit | instant `tool_start` + `tool_end` pair (`Read`, `Edit`) |
+| subagentStart / subagentStop | `subagent_start` / `subagent_stop` |
+| stop | `stop` |
+
+Cursor hooks must echo stdin to stdout; the tracker does so only for Cursor
+events and keeps stdout empty for Claude Code. `ECC_LIVE_HARNESS` forces the
+harness label, `CURSOR_CONFIG_DIR` overrides where the Cursor installer writes.
+
+### Server flags
+
+| Flag | Meaning |
+|------|---------|
+| `--port N` | listen port (default `3457`, or `ECC_LIVE_PORT`) |
+| `--file <events.jsonl>` | tail a specific events file instead of the default |
+| `--demo [--loop]` | play the scripted scenario; `--loop` replays it |
+| `--hide-ended` | omit sessions whose status is `ended` from the SSE stream and `/api/snapshot` |
+
+```bash
+node scripts/agent-live-dashboard.js --hide-ended
+```
+
+The header also has a **Hide ended** toggle (off by default) that does the same
+filtering in the browser and auto-selects the most recent non-ended session.
+The choice is remembered per browser in `localStorage` (`ecc-live-hide-ended`).
+Use the toggle for a per-browser preference and the flag when the server should
+drop ended sessions for every client; with the flag on, the toggle is disabled.
+
+Note: the demo scenario ends its session with a `session_end` event, so with
+`--demo --hide-ended` (or the toggle on) the board empties when the scenario
+finishes and fills again on the next `--loop` run.
+
 ## What is captured
 
 | Claude Code event | Stored as | Used for |
@@ -53,13 +108,14 @@ useful, but its tool calls will appear under the main session.
 
 | Path | Role |
 |------|------|
-| `scripts/hooks/agent-live-tracker.js` | hook: normalize + append JSONL (always exit 0) |
+| `scripts/hooks/agent-live-tracker.js` | hook entry point: append JSONL (always exit 0) |
+| `scripts/lib/agent-live-events.js` | normalizes Claude Code and Cursor payloads, detects harness |
 | `scripts/lib/agent-live-state.js` | pure reducer: events → sessions/agents/stages/feed |
-| `scripts/agent-live-dashboard.js` | loopback HTTP + SSE server, `--demo --loop` |
+| `scripts/agent-live-dashboard.js` | loopback HTTP + SSE server, `--demo --loop`, `--hide-ended` |
 | `scripts/agent-live-ui.html` | single-file UI, light/dark, reduced-motion aware |
 | `scripts/lib/agent-live-demo.js` | scripted scenario used by `--demo` |
 | `scripts/agent-live-install.js` | print / merge / remove settings.json hook entries |
-| `tests/lib/agent-live-state.test.js`, `tests/hooks/agent-live-tracker.test.js` | tests |
+| `tests/lib/agent-live-state.test.js`, `tests/hooks/agent-live-tracker.test.js`, `tests/scripts/agent-live-dashboard.test.js` | tests |
 
 ## Environment
 

@@ -164,6 +164,13 @@ function runTests() {
     assert.deepStrictEqual(snap.sessions.map(s => s.id), ['new', 'old']);
   });
 
+  check('session carries harness and model from its first events', () => {
+    const snap = buildSnapshot([ev('session_start', { harness: 'cursor', model: 'gpt-x' }), ev('prompt', { prompt: 'p' })], clock);
+    assert.strictEqual(snap.sessions[0].harness, 'cursor');
+    assert.strictEqual(snap.sessions[0].model, 'gpt-x');
+    assert.strictEqual(buildSnapshot([ev('session_start')], clock).sessions[0].harness, 'claude');
+  });
+
   check('ignores malformed events', () => {
     const snap = buildSnapshot([null, {}, { type: 'tool_start' }, ev('session_start')], clock);
     assert.strictEqual(snap.sessions.length, 1);

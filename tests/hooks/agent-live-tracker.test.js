@@ -10,8 +10,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { normalizeEvent, describeTarget, run } = require('../../scripts/hooks/agent-live-tracker');
-const { buildHookEntries, mergeHooks, removeHooks, EVENTS } = require('../../scripts/agent-live-install');
+const { normalizeEvent, normalizeEvents, describeTarget, run } = require('../../scripts/hooks/agent-live-tracker');
+const { detectHarness } = require('../../scripts/lib/agent-live-events');
+const { buildHookEntries, buildCursorHookEntries, mergeHooks, removeHooks, resolveTarget, EVENTS, CURSOR_EVENTS } = require('../../scripts/agent-live-install');
 const { createTail, parseLines } = require('../../scripts/agent-live-dashboard');
 
 function test(name, fn) {
@@ -43,6 +44,7 @@ function runTests() {
       const event = normalizeEvent({ hook_event_name: name, session_id: 's' }, { now: 5 });
       assert.strictEqual(event.type, type, name);
       assert.strictEqual(event.ts, 5);
+      assert.strictEqual(event.harness, 'claude');
     }
   });
 
@@ -167,6 +169,101 @@ function runTests() {
     fs.writeFileSync(file, '{"a":9}\n');
     assert.deepStrictEqual(tail().map(e => e.a), [9]);
     assert.strictEqual(resets, 1);
+  });
+
+  console.log('\ncursor harness:');
+  const env = {};
+  check('maps Cursor lifecycle events and uses conversation_id as the session', () => {
+    const start = normalizeEvents({ hook_event_name: 'sessionStart', conversation_id: 'conv-1', workspace_roots: ['/ws'], model: 'gpt-x' }, { now: 1, env });
+    assert.strictEqual(start.length, 1);
+    assert.strictEqual(start[0].type, 'session_start');
+    assert.strictEqual(start[0].harness, 'cursor');
+    assert.strictEqual(start[0].session_id, 'conv-1');
+    assert.strictEqual(start[0].cwd, '/ws');
+    assert.strictEqual(start[0].model, 'gpt-x');
+    const prompt = normalizeEvents({ hook_event_name: 'beforeSubmitPrompt', conversation_id: 'conv-1', prompt: 'build it' }, { now: 2, env })[0];
+    assert.strictEqual(prompt.type, 'prompt');
+    assert.strictEqual(prompt.prompt, 'build it');
+    assert.strictEqual(normalizeEvents({ hook_event_name: 'stop', conversation_id: 'conv-1' }, { now: 3, env })[0].type, 'stop');
+  });
+
+  check('maps Cursor shell and MCP hooks to Bash/MCP tool spans', () => {
+    const before = normalizeEvents({ hook_event_name: 'beforeShellExecution', conversation_id: 'c', command: 'npm test' }, { now: 1, env })[0];
+    assert.deepStrictEqual([before.type, before.tool_name, before.target], ['tool_start', 'Bash', 'npm test']);
+    const after = normalizeEvents({ hook_event_name: 'afterShellExecution', conversation_id: 'c', command: 'npm test', output: 'ok' }, { now: 2, env })[0];
+    assert.deepStrictEqual([after.type, after.tool_name], ['tool_end', 'Bash']);
+    const mcp = normalizeEvents({ hook_event_name: 'beforeMCPExecution', conversation_id: 'c', server: 'github', tool: 'create_pr' }, { now: 3, env })[0];
+    assert.deepStrictEqual([mcp.type, mcp.tool_name, mcp.target], ['tool_start', 'mcp:create_pr', 'github/create_pr']);
+  });
+
+  check('Cursor read/edit hooks emit an instant start+end pair', () => {
+    const read = normalizeEvents({ hook_event_name: 'beforeReadFile', conversation_id: 'c', path: '/a.ts' }, { now: 1, env });
+    assert.strictEqual(read.length, 2);
+    assert.deepStrictEqual(read.map(e => e.type), ['tool_start', 'tool_end']);
+    assert.strictEqual(read[0].tool_name, 'Read');
+    assert.strictEqual(read[1].target, '/a.ts');
+    const edit = normalizeEvents({ hook_event_name: 'afterFileEdit', conversation_id: 'c', file: '/b.ts' }, { now: 1, env });
+    assert.strictEqual(edit[0].tool_name, 'Edit');
+    assert.strictEqual(edit.length, 2);
+  });
+
+  check('Cursor subagent hooks carry agent_name as agent_type', () => {
+    const start = normalizeEvents({ hook_event_name: 'subagentStart', conversation_id: 'c', agent_name: 'reviewer', generation_id: 'g1' }, { now: 1, env })[0];
+    assert.deepStrictEqual([start.type, start.agent_type, start.agent_id], ['subagent_start', 'reviewer', 'g1']);
+  });
+
+  check('ignores Cursor events the dashboard does not model', () => {
+    assert.deepStrictEqual(normalizeEvents({ hook_event_name: 'beforeTabFileRead', conversation_id: 'c' }, { env }), []);
+    assert.deepStrictEqual(normalizeEvents({ hook_event_name: 'preCompact', conversation_id: 'c' }, { env }), []);
+  });
+
+  check('detectHarness: override > event name > env > default', () => {
+    assert.strictEqual(detectHarness({}, 'PreToolUse', { ECC_LIVE_HARNESS: 'cursor' }), 'cursor');
+    assert.strictEqual(detectHarness({}, 'beforeShellExecution', {}), 'cursor');
+    assert.strictEqual(detectHarness({}, 'PreToolUse', { CURSOR_VERSION: '1' }), 'claude');
+    assert.strictEqual(detectHarness({}, '', { CURSOR_VERSION: '1' }), 'cursor');
+    assert.strictEqual(detectHarness({}, '', {}), 'claude');
+  });
+
+  check('run appends both lines of an instant pair', () => {
+    const file = tmpFile();
+    const result = run(JSON.stringify({ hook_event_name: 'afterFileEdit', conversation_id: 'c', path: '/x.ts' }), { eventsPath: file, env });
+    assert.strictEqual(result.events.length, 2);
+    assert.strictEqual(fs.readFileSync(file, 'utf8').trim().split('\n').length, 2);
+  });
+
+  check('CLI echoes stdin only for Cursor hooks', () => {
+    const script = path.join(__dirname, '../../scripts/hooks/agent-live-tracker.js');
+    const base = { encoding: 'utf8' };
+    const cursor = spawnSync(process.execPath, [script, 'beforeShellExecution'], { ...base, input: '{"conversation_id":"c","command":"ls"}', env: { ...process.env, ECC_LIVE_EVENTS_FILE: tmpFile() } });
+    assert.strictEqual(cursor.status, 0);
+    assert.strictEqual(cursor.stdout, '{"conversation_id":"c","command":"ls"}');
+    const claude = spawnSync(process.execPath, [script, 'PreToolUse'], { ...base, input: '{"session_id":"s","tool_name":"Read","tool_input":{}}', env: { ...process.env, ECC_LIVE_EVENTS_FILE: tmpFile() } });
+    assert.strictEqual(claude.status, 0);
+    assert.strictEqual(claude.stdout, '');
+  });
+
+  console.log('\nagent-live-install (cursor):');
+  check('builds Cursor hooks.json entries for every mapped Cursor event', () => {
+    const entries = buildCursorHookEntries('/repo');
+    assert.deepStrictEqual(Object.keys(entries).sort(), [...CURSOR_EVENTS].sort());
+    assert.strictEqual(entries.beforeShellExecution[0].event, 'beforeShellExecution');
+    assert.ok(entries.stop[0].command.endsWith('agent-live-tracker.js stop'));
+  });
+
+  check('merge/remove work on Cursor flat entries and keep foreign ECC cursor hooks', () => {
+    const foreign = { stop: [{ command: 'node .cursor/hooks/stop.js', event: 'stop' }] };
+    const merged = mergeHooks(foreign, buildCursorHookEntries('/repo'));
+    assert.strictEqual(merged.stop.length, 2);
+    assert.deepStrictEqual(mergeHooks(merged, buildCursorHookEntries('/repo')), merged, 'idempotent');
+    assert.deepStrictEqual(removeHooks(merged), foreign);
+  });
+
+  check('resolveTarget picks ~/.cursor/hooks.json with --cursor and honours CURSOR_CONFIG_DIR', () => {
+    const target = resolveTarget(['--cursor'], '/repo', { CURSOR_CONFIG_DIR: '/cfg' });
+    assert.strictEqual(target.filePath, path.join('/cfg', 'hooks.json'));
+    assert.deepStrictEqual(target.wrap({}, {}), { version: 1, hooks: {} });
+    assert.ok(resolveTarget([], '/repo', {}).filePath.endsWith('settings.json'));
   });
 
   console.log(`\n${passed} passed, ${failed} failed`);

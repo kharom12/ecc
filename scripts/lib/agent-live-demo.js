@@ -12,7 +12,7 @@ const CWD = '/Users/dev/projects/bukkii-salon';
 const TASK = 'Thêm tính năng đặt lịch lại (reschedule) cho khách: API PATCH /bookings/:id/reschedule, kiểm tra slot trống, gửi SMS xác nhận, có test.';
 
 function step(delayMs, event) {
-  return { delayMs, event: { session_id: SESSION_ID, cwd: CWD, ...event } };
+  return { delayMs, event: { session_id: SESSION_ID, harness: 'claude', cwd: CWD, ...event } };
 }
 
 function tool(agentId, toolUseId, name, target, extra = {}) {

@@ -69,6 +69,8 @@ function createAgent(id, type, startedAt, extra = {}) {
 function createSession(id, event) {
   return {
     id,
+    harness: event.harness || 'claude',
+    model: event.model || null,
     cwd: event.cwd || '',
     startedAt: event.ts,
     lastEventAt: event.ts,
@@ -284,7 +286,16 @@ function reduceSessions(sessionsById, event) {
   const sessionId = event.session_id || 'unknown';
   const existing = sessionsById[sessionId] || createSession(sessionId, event);
   const reduced = reduceEvent(existing, event);
-  return { ...sessionsById, [sessionId]: { ...reduced, lastEventAt: event.ts } };
+  return {
+    ...sessionsById,
+    [sessionId]: {
+      ...reduced,
+      lastEventAt: event.ts,
+      harness: reduced.harness || event.harness || 'claude',
+      model: reduced.model || event.model || null,
+      cwd: reduced.cwd || event.cwd || ''
+    }
+  };
 }
 
 function deriveStages(session) {
@@ -333,6 +344,8 @@ function toPublicSession(session, now) {
   const running = agents.filter(agent => agent.status === 'running').length;
   return {
     id: session.id,
+    harness: session.harness,
+    model: session.model,
     cwd: session.cwd,
     status: session.status,
     task: session.task,

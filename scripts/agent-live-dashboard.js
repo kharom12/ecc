@@ -7,6 +7,7 @@
  * Usage:
  *   node scripts/agent-live-dashboard.js [--port 3457] [--file <events.jsonl>]
  *   node scripts/agent-live-dashboard.js --demo [--loop]     # scripted feature task
+ *   node scripts/agent-live-dashboard.js --hide-ended         # omit ended sessions from the stream
  *
  * Open http://127.0.0.1:3457
  */
@@ -47,6 +48,7 @@ function parseArgs(argv) {
     file: read('--file'),
     demo: args.includes('--demo'),
     loop: args.includes('--loop'),
+    hideEnded: args.includes('--hide-ended'),
     help: args.includes('--help') || args.includes('-h')
   };
 }
@@ -126,7 +128,13 @@ function loadAgentCatalog(root = ROOT) {
   );
 }
 
-function createStore() {
+// Server-side filter for --hide-ended; hiddenSessions counts only what the server dropped.
+function omitEndedSessions(snapshot) {
+  const sessions = snapshot.sessions.filter(session => session.status !== 'ended');
+  return { ...snapshot, sessions, hiddenSessions: snapshot.sessions.length - sessions.length };
+}
+
+function createStore(options = {}) {
   let events = [];
   return {
     append(newEvents) {
@@ -139,7 +147,8 @@ function createStore() {
       events = [];
     },
     snapshot() {
-      return buildSnapshot(events);
+      const snapshot = buildSnapshot(events);
+      return options.hideEnded ? omitEndedSessions(snapshot) : snapshot;
     },
     size() {
       return events.length;
@@ -155,14 +164,16 @@ function sendJson(res, status, payload) {
 function createServer(options) {
   const host = resolveHost();
   const allowedHosts = buildAllowedHostnames(host);
-  const store = createStore();
+  const hideEnded = Boolean(options.hideEnded);
+  const store = createStore({ hideEnded });
   const catalog = loadAgentCatalog();
   const clients = new Set();
   const eventsPath = options.eventsPath;
   const tail = createTail(eventsPath, { onReset: () => store.reset() });
+  const buildPayload = () => ({ ...store.snapshot(), mode: options.demo ? 'demo' : 'live', source: eventsPath, hideEnded });
 
   const broadcast = () => {
-    const payload = `data: ${JSON.stringify({ ...store.snapshot(), mode: options.demo ? 'demo' : 'live', source: eventsPath })}\n\n`;
+    const payload = `data: ${JSON.stringify(buildPayload())}\n\n`;
     for (const client of clients) client.write(payload);
   };
 
@@ -192,12 +203,12 @@ function createServer(options) {
         Connection: 'keep-alive'
       });
       clients.add(res);
-      res.write(`data: ${JSON.stringify({ ...store.snapshot(), mode: options.demo ? 'demo' : 'live', source: eventsPath })}\n\n`);
+      res.write(`data: ${JSON.stringify(buildPayload())}\n\n`);
       req.on('close', () => clients.delete(res));
       return;
     }
     if (url.pathname === '/api/snapshot') {
-      sendJson(res, 200, { ...store.snapshot(), mode: options.demo ? 'demo' : 'live', source: eventsPath });
+      sendJson(res, 200, buildPayload());
       return;
     }
     if (url.pathname === '/api/catalog') {
@@ -245,7 +256,7 @@ function startDemo(eventsPath, loop) {
 function main() {
   const args = parseArgs(process.argv);
   if (args.help) {
-    console.log('Usage: node scripts/agent-live-dashboard.js [--port N] [--file events.jsonl] [--demo] [--loop]');
+    console.log('Usage: node scripts/agent-live-dashboard.js [--port N] [--file events.jsonl] [--demo] [--loop] [--hide-ended]');
     return;
   }
 
@@ -255,12 +266,15 @@ function main() {
 
   if (!args.demo) fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
   const stopDemo = args.demo ? startDemo(eventsPath, args.loop) : () => {};
-  const { server, host } = createServer({ eventsPath, demo: args.demo });
+  const { server, host } = createServer({ eventsPath, demo: args.demo, hideEnded: args.hideEnded });
 
   server.listen(args.port, host, () => {
     const shownHost = host === '::1' ? '[::1]' : host;
     console.log(`[AgentLive] ${args.demo ? 'DEMO' : 'LIVE'} dashboard → http://${shownHost}:${args.port}`);
     console.log(`[AgentLive] tailing ${eventsPath}`);
+    if (args.hideEnded) {
+      console.log(`[AgentLive] --hide-ended: ended sessions are omitted from the stream${args.demo ? ' (the demo session ends, so the board empties when the scenario finishes)' : ''}`);
+    }
     if (!args.demo) {
       console.log('[AgentLive] no events yet? run: node scripts/agent-live-install.js --write  (then restart Claude Code)');
     }
@@ -289,4 +303,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { createServer, createTail, loadAgentCatalog, parseArgs, parseLines, resolveHost };
+module.exports = { createServer, createStore, createTail, loadAgentCatalog, omitEndedSessions, parseArgs, parseLines, resolveHost };

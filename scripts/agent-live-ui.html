@@ -100,6 +100,11 @@ header {
 }
 .chip.live { border-color: color-mix(in oklch, var(--ok) 50%, var(--line)); color: var(--ok); }
 .chip.demo { border-color: color-mix(in oklch, var(--spawn) 50%, var(--line)); color: var(--spawn); }
+.chip[hidden] { display: none; }
+.chip.harness { font-weight: 600; letter-spacing: 0.02em; }
+.chip.harness-claude { color: oklch(55% 0.16 40); border-color: oklch(55% 0.16 40 / 0.45); background: oklch(55% 0.16 40 / 0.1); }
+.chip.harness-cursor { color: oklch(50% 0.12 290); border-color: oklch(50% 0.12 290 / 0.45); background: oklch(50% 0.12 290 / 0.1); }
+.chip.harness small { font-weight: 400; color: var(--ink-3); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); display: inline-block; }
 .dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok) 25%, transparent); }
 .dot.off { background: var(--err); }
@@ -109,6 +114,10 @@ select, .ghost {
 }
 select:hover, .ghost:hover { border-color: var(--ink-3); }
 .ghost:active { transform: translateY(1px); }
+.toggle { font-size: 12px; color: var(--ink-2); }
+.toggle[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in oklch, var(--accent) 45%, var(--line)); }
+.toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+.toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .clock { font-size: 22px; letter-spacing: -0.02em; }
 
 .task {
@@ -220,9 +229,11 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
 <header>
   <div class="brand"><b>ECC</b><span>Agent Live</span></div>
   <span id="mode" class="chip">connecting…</span>
+  <span id="harness" class="chip harness" hidden></span>
   <span class="chip"><span id="conn" class="dot"></span><span id="connText">stream</span></span>
   <div class="grow"></div>
   <select id="sessionSel" aria-label="Session"></select>
+  <button id="hideEnded" class="ghost toggle" type="button" aria-pressed="false" title="Hide ended sessions from the list">Hide ended</button>
   <button id="theme" class="ghost" aria-label="Toggle theme">◐</button>
   <div id="clock" class="clock mono">00:00</div>
 </header>
@@ -264,7 +275,7 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
   'use strict';
   const $ = id => document.getElementById(id);
   const HUES = [255, 150, 320, 70, 200, 25, 290, 110];
-  const state = { snapshot: null, selected: null, catalog: {}, connected: false, skew: 0, feedSeen: new Set() };
+  const state = { snapshot: null, selected: null, hideEnded: false, catalog: {}, connected: false, skew: 0, feedSeen: new Set() };
 
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const now = () => Date.now() - state.skew;
@@ -281,6 +292,8 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
     if (/^(Bash|PowerShell)$/.test(name)) return 'bash';
     return 'read';
   };
+  const HARNESS_LABEL = { claude: 'Claude Code', cursor: 'Cursor' };
+  const harnessLabel = s => HARNESS_LABEL[s?.harness] || (s?.harness ? s.harness : 'Claude Code');
   const agentColor = (agent, index) => agent.id === 'main' ? 'var(--ink-2)' : `oklch(62% 0.15 ${HUES[index % HUES.length]})`;
 
   // --- theme -------------------------------------------------------------
@@ -292,6 +305,25 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
     try { localStorage.setItem('ecc-live-theme', root.dataset.theme); } catch {}
   });
 
+  // --- hide ended --------------------------------------------------------
+  const HIDE_ENDED_KEY = 'ecc-live-hide-ended';
+  try { state.hideEnded = localStorage.getItem(HIDE_ENDED_KEY) === '1'; } catch {}
+  // serverHides: the server runs with --hide-ended, so the toggle is shown as on and disabled.
+  const syncHideEnded = (serverHides = false) => {
+    const btn = $('hideEnded');
+    btn.disabled = serverHides;
+    btn.setAttribute('aria-pressed', String(serverHides || state.hideEnded));
+    btn.title = serverHides ? 'Server runs with --hide-ended' : 'Hide ended sessions from the list';
+  };
+  syncHideEnded();
+  $('hideEnded').addEventListener('click', () => {
+    state.hideEnded = !state.hideEnded;
+    try { localStorage.setItem(HIDE_ENDED_KEY, state.hideEnded ? '1' : '0'); } catch {}
+    syncHideEnded(Boolean(state.snapshot?.hideEnded));
+    state.selected = pickSelection(visibleSessions(), state.selected);
+    render();
+  });
+
   // --- data --------------------------------------------------------------
   fetch('/api/catalog').then(r => r.json()).then(c => { state.catalog = c; render(); }).catch(() => {});
   const connect = () => {
@@ -301,7 +333,8 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
       const snap = JSON.parse(e.data);
       state.skew = Date.now() - snap.generatedAt;
       state.snapshot = snap;
-      if (!state.selected || !snap.sessions.some(s => s.id === state.selected)) state.selected = snap.sessions[0]?.id || null;
+      syncHideEnded(Boolean(snap.hideEnded));
+      state.selected = pickSelection(visibleSessions(), state.selected);
       render();
     };
     es.onerror = () => { state.connected = false; renderConn(); es.close(); setTimeout(connect, 1500); };
@@ -310,7 +343,16 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
   $('sessionSel').addEventListener('change', e => { state.selected = e.target.value; render(); });
   setInterval(() => { tickClock(); tickElapsed(); renderTimeline(); }, 1000);
 
-  const current = () => state.snapshot?.sessions.find(s => s.id === state.selected) || null;
+  // Sessions are sorted by lastEventAt desc, so [0] is the most recent one.
+  function visibleSessions() {
+    const sessions = state.snapshot ? state.snapshot.sessions : [];
+    return state.hideEnded ? sessions.filter(s => s.status !== 'ended') : sessions;
+  }
+  function pickSelection(sessions, selectedId) {
+    return sessions.some(s => s.id === selectedId) ? selectedId : (sessions[0]?.id || null);
+  }
+  const current = () => visibleSessions().find(s => s.id === state.selected) || null;
+  const allHidden = () => Boolean(state.snapshot) && visibleSessions().length === 0 && (state.snapshot.sessions.length > 0 || (state.snapshot.hiddenSessions || 0) > 0);
 
   // --- render ------------------------------------------------------------
   function renderConn() {
@@ -327,15 +369,23 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
     $('mode').textContent = snap.mode === 'demo' ? 'demo scenario' : 'live';
     $('mode').className = `chip ${snap.mode}`;
     const sel = $('sessionSel');
-    sel.innerHTML = snap.sessions.map(s => `<option value="${esc(s.id)}" ${s.id === state.selected ? 'selected' : ''}>${esc(s.id.slice(0, 8))} · ${esc(s.status)} · ${esc((s.cwd || '').split('/').pop() || '—')}</option>`).join('') || '<option>no sessions</option>';
+    const emptyLabel = allHidden() ? 'no active sessions' : 'no sessions';
+    sel.innerHTML = visibleSessions().map(s => `<option value="${esc(s.id)}" ${s.id === state.selected ? 'selected' : ''}>${esc(harnessLabel(s))} · ${esc(s.id.slice(0, 8))} · ${esc(s.status)} · ${esc((s.cwd || '').split('/').pop() || '—')}</option>`).join('') || `<option value="" disabled selected>${emptyLabel}</option>`;
     const s = current();
+    const hc = $('harness');
+    if (s) { hc.hidden = false; hc.className = `chip harness harness-${esc(s.harness || 'claude')}`; hc.innerHTML = `${esc(harnessLabel(s))}${s.model ? ` <small>${esc(s.model)}</small>` : ''}`; } else hc.hidden = true;
     renderTask(s); renderStages(s); renderCards(); renderFeed(s); renderTimeline(); tickClock();
   }
   function renderTask(s) {
     const h = $('task');
-    if (!s) { h.textContent = 'Waiting for a session…'; h.className = 'empty'; $('sessionMeta').textContent = ''; return; }
+    if (!s) {
+      h.textContent = allHidden() ? 'All sessions have ended.' : 'Waiting for a session…'; h.className = 'empty'; $('sessionMeta').textContent = '';
+      for (const id of ['sAgents', 'sRunning', 'sTools', 'sErrors']) $(id).textContent = '0';
+      $('sErrors').className = 'mono';
+      return;
+    }
     if (s.task) { h.textContent = s.task.text; h.className = ''; } else { h.textContent = 'Session open, no task submitted yet…'; h.className = 'empty'; }
-    $('sessionMeta').textContent = `${s.id}  ·  ${s.cwd || 'cwd unknown'}  ·  ${s.status}`;
+    $('sessionMeta').textContent = `${harnessLabel(s)}${s.model ? ` (${s.model})` : ''}  ·  ${s.id}  ·  ${s.cwd || 'cwd unknown'}  ·  ${s.status}`;
     $('sAgents').textContent = s.counts.agents; $('sRunning').textContent = s.counts.running;
     $('sTools').textContent = s.counts.tools; $('sErrors').textContent = s.counts.errors;
     $('sErrors').className = `mono${s.counts.errors ? ' err' : ''}`;
@@ -364,7 +414,8 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
     setText(status, a.status);
     const sc = `status ${a.status}`; if (status.className !== sc) status.className = sc;
     const stage = f('stage');
-    if (a.stage) { setText(stage, a.stage); stage.hidden = false; } else stage.hidden = true;
+    const chipText = a.stage || (a.id === 'main' ? harnessLabel(current()) : '');
+    if (chipText) { setText(stage, chipText); stage.hidden = false; const sc2 = `chip${a.id === 'main' ? ` harness harness-${current()?.harness || 'claude'}` : ''}`; if (stage.className !== sc2) stage.className = sc2; } else stage.hidden = true;
     const cur = a.currentTool;
     const nowEl = f('now');
     const nc = `now mono${cur ? '' : ' quiet'}`; if (nowEl.className !== nc) nowEl.className = nc;
@@ -378,7 +429,9 @@ section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-tran
     const s = current();
     const box = $('cards');
     if (!s) {
-      box.innerHTML = `<div class="empty-board">No events yet. Install the tracker with <code>node scripts/agent-live-install.js --write</code>, restart Claude Code, then give it a task.<br/>Or try <code>npm run dashboard:live:demo</code>.</div>`;
+      box.innerHTML = allHidden()
+        ? `<div class="empty-board">All sessions have ended. ${state.snapshot.hideEnded ? 'The server runs with <code>--hide-ended</code>, so ended sessions are not streamed.' : 'Turn off “Hide ended” to review them.'}</div>`
+        : `<div class="empty-board">No events yet. Install the tracker with <code>node scripts/agent-live-install.js --write</code>, restart Claude Code, then give it a task.<br/>Or try <code>npm run dashboard:live:demo</code>.</div>`;
       box.dataset.session = '';
       return;
     }

@@ -503,7 +503,10 @@
     "build:opencode": "node scripts/build-opencode.js",
     "prepack": "npm run build:opencode",
     "dashboard": "python3 ./ecc_dashboard.py",
-    "dashboard:web": "node scripts/dashboard-web.js"
+    "dashboard:web": "node scripts/dashboard-web.js",
+    "dashboard:live": "node scripts/agent-live-dashboard.js",
+    "dashboard:live:demo": "node scripts/agent-live-dashboard.js --demo --loop",
+    "dashboard:live:install": "node scripts/agent-live-install.js --write"
   },
   "dependencies": {
     "@iarna/toml": "2.2.5",

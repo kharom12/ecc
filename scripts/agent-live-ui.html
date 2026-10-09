@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ECC Agent Live</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root {
+  --paper: oklch(97.5% 0.008 80);
+  --paper-2: oklch(94.5% 0.012 80);
+  --ink: oklch(20% 0.02 60);
+  --ink-2: oklch(42% 0.02 60);
+  --ink-3: oklch(62% 0.015 60);
+  --line: oklch(86% 0.012 80);
+  --accent: oklch(62% 0.19 255);
+  --accent-soft: oklch(92% 0.05 255);
+  --ok: oklch(66% 0.16 150);
+  --ok-soft: oklch(93% 0.05 150);
+  --warn: oklch(75% 0.16 75);
+  --err: oklch(60% 0.2 25);
+  --err-soft: oklch(93% 0.05 25);
+  --spawn: oklch(60% 0.14 320);
+  --read: oklch(68% 0.11 230);
+  --edit: oklch(72% 0.15 70);
+  --bash: oklch(62% 0.13 300);
+  --font-ui: 'Inter', system-ui, sans-serif;
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --r-sm: 6px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --shadow: 0 1px 0 oklch(0% 0 0 / 0.04), 0 8px 24px -16px oklch(20% 0.02 60 / 0.35);
+  --dur: 220ms;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: oklch(17% 0.012 260);
+    --paper-2: oklch(21% 0.014 260);
+    --ink: oklch(94% 0.01 80);
+    --ink-2: oklch(72% 0.012 80);
+    --ink-3: oklch(55% 0.012 80);
+    --line: oklch(29% 0.014 260);
+    --accent: oklch(72% 0.17 255);
+    --accent-soft: oklch(30% 0.07 255);
+    --ok: oklch(72% 0.15 150);
+    --ok-soft: oklch(28% 0.06 150);
+    --err: oklch(68% 0.18 25);
+    --err-soft: oklch(28% 0.07 25);
+    --shadow: 0 1px 0 oklch(100% 0 0 / 0.04), 0 12px 32px -18px oklch(0% 0 0 / 0.8);
+  }
+}
+:root[data-theme="dark"] {
+  --paper: oklch(17% 0.012 260);
+  --paper-2: oklch(21% 0.014 260);
+  --ink: oklch(94% 0.01 80);
+  --ink-2: oklch(72% 0.012 80);
+  --ink-3: oklch(55% 0.012 80);
+  --line: oklch(29% 0.014 260);
+  --accent: oklch(72% 0.17 255);
+  --accent-soft: oklch(30% 0.07 255);
+  --ok: oklch(72% 0.15 150);
+  --ok-soft: oklch(28% 0.06 150);
+  --err: oklch(68% 0.18 25);
+  --err-soft: oklch(28% 0.07 25);
+  --shadow: 0 1px 0 oklch(100% 0 0 / 0.04), 0 12px 32px -18px oklch(0% 0 0 / 0.8);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(oklch(0% 0 0 / 0.05) 0.6px, transparent 0.6px);
+  background-size: 22px 22px;
+}
+button, select { font: inherit; color: inherit; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+
+header {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 14px 24px; border-bottom: 1px solid var(--line);
+  background: color-mix(in oklch, var(--paper) 86%, transparent);
+  backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 5;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand b { font-weight: 600; letter-spacing: -0.01em; }
+.brand span { color: var(--ink-3); font-size: 12px; }
+.grow { flex: 1; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--paper-2); font-size: 12px; color: var(--ink-2);
+}
+.chip.live { border-color: color-mix(in oklch, var(--ok) 50%, var(--line)); color: var(--ok); }
+.chip.demo { border-color: color-mix(in oklch, var(--spawn) 50%, var(--line)); color: var(--spawn); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); display: inline-block; }
+.dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in oklch, var(--ok) 25%, transparent); }
+.dot.off { background: var(--err); }
+select, .ghost {
+  background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 9px; cursor: pointer;
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+select:hover, .ghost:hover { border-color: var(--ink-3); }
+.ghost:active { transform: translateY(1px); }
+.clock { font-size: 22px; letter-spacing: -0.02em; }
+
+.task {
+  padding: 28px 24px 18px; border-bottom: 1px solid var(--line);
+  display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: end;
+}
+.task h1 {
+  font-family: var(--font-serif); font-weight: 400; font-size: clamp(22px, 1.4rem + 1.2vw, 38px);
+  line-height: 1.12; letter-spacing: -0.01em; margin: 6px 0 0; max-width: 60ch; text-wrap: balance;
+}
+.task h1.empty { color: var(--ink-3); font-style: italic; }
+.stats { display: flex; gap: 22px; }
+.stat .eyebrow { margin-bottom: 2px; }
+.stat b { font-size: 26px; font-weight: 500; letter-spacing: -0.02em; display: block; line-height: 1; }
+.stat b.err { color: var(--err); }
+
+main { display: grid; grid-template-columns: 210px minmax(0, 1fr) 330px; gap: 0; min-height: 52vh; }
+.rail, .feedwrap { border-right: 1px solid var(--line); padding: 20px; }
+.feedwrap { border-right: 0; border-left: 1px solid var(--line); }
+.board { padding: 20px 24px; }
+section h2 { font-size: 12px; margin: 0 0 14px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+
+.stages { list-style: none; padding: 0; margin: 0; position: relative; }
+.stages::before { content: ''; position: absolute; left: 7px; top: 10px; bottom: 10px; width: 1px; background: var(--line); }
+.stage { display: flex; align-items: center; gap: 12px; padding: 7px 0; color: var(--ink-3); position: relative; }
+.stage .pip { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--line); background: var(--paper); display: grid; place-items: center; flex: none; transition: transform var(--dur) var(--ease); }
+.stage.active { color: var(--ink); font-weight: 600; }
+.stage.active .pip { border-color: var(--accent); background: var(--accent); transform: scale(1.15); box-shadow: 0 0 0 5px var(--accent-soft); }
+.stage.done { color: var(--ink-2); }
+.stage.done .pip { border-color: var(--ok); background: var(--ok); }
+.stage.done .pip::after { content: ''; width: 5px; height: 3px; border-left: 1.5px solid var(--paper); border-bottom: 1.5px solid var(--paper); transform: rotate(-45deg) translate(0.5px, -0.5px); }
+.stage.error .pip { border-color: var(--err); background: var(--err); }
+.stage small { margin-left: auto; color: var(--ink-3); font-size: 11px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.card {
+  background: var(--paper-2); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 16px 16px 14px;
+  box-shadow: var(--shadow); position: relative; overflow: hidden;
+  transition: transform var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.card.new { animation: rise 400ms var(--ease) both; }
+.card:hover { transform: translateY(-2px); border-color: var(--ink-3); }
+.card.main { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; }
+.card::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--agent, var(--ink-3)); }
+.card.running::before { animation: pulse 1.6s ease-in-out infinite; }
+.card .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card .name { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
+.card .desc { color: var(--ink-2); margin: 6px 0 10px; font-size: 13px; min-height: 1.2em; }
+.status { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: var(--paper); border: 1px solid var(--line); color: var(--ink-3); }
+.status.running { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 45%, var(--line)); background: var(--accent-soft); }
+.status.done { color: var(--ok); background: var(--ok-soft); border-color: color-mix(in oklch, var(--ok) 40%, var(--line)); }
+.status.error { color: var(--err); background: var(--err-soft); border-color: color-mix(in oklch, var(--err) 40%, var(--line)); }
+.status.idle { color: var(--ink-2); }
+.now { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 8px 10px; border-radius: var(--r-sm); background: var(--paper); border: 1px dashed var(--line); min-height: 34px; overflow: hidden; }
+.now .tool { font-weight: 600; color: var(--ink); flex: none; }
+.now .tgt { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.now.quiet { color: var(--ink-3); font-style: italic; }
+.meta { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--ink-3); }
+.meta b { color: var(--ink); font-weight: 500; }
+.strip { display: flex; gap: 2px; margin-top: 10px; height: 6px; }
+.strip i { flex: 1; min-width: 3px; max-width: 14px; border-radius: 2px; background: var(--c); opacity: 0.85; }
+.empty-board { padding: 40px 20px; text-align: center; color: var(--ink-3); border: 1px dashed var(--line); border-radius: var(--r-lg); }
+.empty-board code { font-family: var(--font-mono); font-size: 12px; background: var(--paper-2); padding: 2px 6px; border-radius: 4px; }
+
+.feed { list-style: none; margin: 0; padding: 0; max-height: 62vh; overflow: auto; }
+.feed li { display: grid; grid-template-columns: 54px 10px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; align-items: start; }
+.feed li.new { animation: rise 300ms var(--ease) both; }
+.feed time { color: var(--ink-3); font-size: 11.5px; padding-top: 2px; }
+.feed .dot { margin-top: 5px; width: 7px; height: 7px; }
+.feed .t { color: var(--ink-2); word-break: break-word; }
+.feed .t b { color: var(--ink); font-weight: 500; }
+.feed li.error .t { color: var(--err); }
+.feed li.prompt .t, .feed li.spawn .t { color: var(--ink); }
+
+.timeline { border-top: 1px solid var(--line); padding: 20px 24px 28px; }
+.timeline .legend { display: flex; gap: 14px; font-size: 11.5px; color: var(--ink-3); margin-bottom: 10px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
+.timeline svg { width: 100%; height: auto; display: block; }
+.timeline text { font-family: var(--font-mono); font-size: 11px; fill: var(--ink-3); }
+.timeline .lane { fill: var(--line); opacity: 0.6; }
+.timeline .life { fill: var(--agent); opacity: 0.14; }
+.timeline .bar { rx: 2; }
+.timeline .grid { stroke: var(--line); stroke-width: 1; }
+.timeline .nowline { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.timeline .label { fill: var(--ink); font-family: var(--font-ui); font-size: 12px; font-weight: 500; }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } }
+
+@media (max-width: 1100px) {
+  main { grid-template-columns: 1fr; }
+  .rail, .feedwrap { border: 0; border-bottom: 1px solid var(--line); }
+  .feedwrap { border-top: 1px solid var(--line); }
+  .stages::before { display: none; }
+  .stages { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  .stage small { margin-left: 6px; }
+}
+@media (max-width: 720px) {
+  header, .task, .board, .rail, .feedwrap, .timeline { padding-left: 16px; padding-right: 16px; }
+  .task { grid-template-columns: 1fr; }
+  .stats { gap: 16px; }
+  .card.main { grid-template-columns: 1fr; }
+  .clock { font-size: 18px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>ECC</b><span>Agent Live</span></div>
+  <span id="mode" class="chip">connecting…</span>
+  <span class="chip"><span id="conn" class="dot"></span><span id="connText">stream</span></span>
+  <div class="grow"></div>
+  <select id="sessionSel" aria-label="Session"></select>
+  <button id="theme" class="ghost" aria-label="Toggle theme">◐</button>
+  <div id="clock" class="clock mono">00:00</div>
+</header>
+
+<section class="task" aria-labelledby="taskLabel">
+  <div>
+    <div id="taskLabel" class="eyebrow">Task</div>
+    <h1 id="task" class="empty">Waiting for a task…</h1>
+    <div id="sessionMeta" class="mono" style="color:var(--ink-3);font-size:11.5px;margin-top:10px"></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="eyebrow">Agents</div><b id="sAgents" class="mono">0</b></div>
+    <div class="stat"><div class="eyebrow">Running</div><b id="sRunning" class="mono">0</b></div>
+    <div class="stat"><div class="eyebrow">Tool calls</div><b id="sTools" class="mono">0</b></div>
+    <div class="stat"><div class="eyebrow">Errors</div><b id="sErrors" class="mono">0</b></div>
+  </div>
+</section>
+
+<main>
+  <section class="rail" aria-labelledby="h-pipe"><h2 id="h-pipe">Pipeline</h2><ul id="stages" class="stages"></ul></section>
+  <section class="board" aria-labelledby="h-agents"><h2 id="h-agents">Agents</h2><div id="cards" class="cards"></div></section>
+  <section class="feedwrap" aria-labelledby="h-feed"><h2 id="h-feed">Live feed</h2><ul id="feed" class="feed"></ul></section>
+</main>
+
+<section class="timeline" aria-labelledby="h-tl">
+  <h2 id="h-tl">Timeline</h2>
+  <div class="legend">
+    <span><i style="background:var(--read)"></i>read / search</span>
+    <span><i style="background:var(--edit)"></i>edit / write</span>
+    <span><i style="background:var(--bash)"></i>bash / test</span>
+    <span><i style="background:var(--spawn)"></i>spawn agent</span>
+    <span><i style="background:var(--err)"></i>failed</span>
+  </div>
+  <div id="tl"></div>
+</section>
+
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const HUES = [255, 150, 320, 70, 200, 25, 290, 110];
+  const state = { snapshot: null, selected: null, catalog: {}, connected: false, skew: 0, feedSeen: new Set() };
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const now = () => Date.now() - state.skew;
+  const fmtDur = ms => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(s / 60), h = Math.floor(m / 60);
+    return h ? `${h}:${String(m % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  };
+  const fmtTime = ts => new Date(ts).toLocaleTimeString([], { hour12: false });
+  const toolKind = (name, status) => {
+    if (status === 'error') return 'err';
+    if (/^(Agent|Task)$/.test(name)) return 'spawn';
+    if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(name)) return 'edit';
+    if (/^(Bash|PowerShell)$/.test(name)) return 'bash';
+    return 'read';
+  };
+  const agentColor = (agent, index) => agent.id === 'main' ? 'var(--ink-2)' : `oklch(62% 0.15 ${HUES[index % HUES.length]})`;
+
+  // --- theme -------------------------------------------------------------
+  try { const t = localStorage.getItem('ecc-live-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  $('theme').addEventListener('click', () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('ecc-live-theme', root.dataset.theme); } catch {}
+  });
+
+  // --- data --------------------------------------------------------------
+  fetch('/api/catalog').then(r => r.json()).then(c => { state.catalog = c; render(); }).catch(() => {});
+  const connect = () => {
+    const es = new EventSource('/events');
+    es.onopen = () => { state.connected = true; renderConn(); };
+    es.onmessage = e => {
+      const snap = JSON.parse(e.data);
+      state.skew = Date.now() - snap.generatedAt;
+      state.snapshot = snap;
+      if (!state.selected || !snap.sessions.some(s => s.id === state.selected)) state.selected = snap.sessions[0]?.id || null;
+      render();
+    };
+    es.onerror = () => { state.connected = false; renderConn(); es.close(); setTimeout(connect, 1500); };
+  };
+  connect();
+  $('sessionSel').addEventListener('change', e => { state.selected = e.target.value; render(); });
+  setInterval(() => { tickClock(); tickElapsed(); renderTimeline(); }, 1000);
+
+  const current = () => state.snapshot?.sessions.find(s => s.id === state.selected) || null;
+
+  // --- render ------------------------------------------------------------
+  function renderConn() {
+    $('conn').className = `dot ${state.connected ? 'on' : 'off'}`;
+    $('connText').textContent = state.connected ? 'streaming' : 'reconnecting';
+  }
+  function tickClock() {
+    const s = current();
+    $('clock').textContent = s ? fmtDur((s.endedAt || now()) - s.startedAt) : '00:00';
+  }
+  function render() {
+    const snap = state.snapshot;
+    if (!snap) return;
+    $('mode').textContent = snap.mode === 'demo' ? 'demo scenario' : 'live';
+    $('mode').className = `chip ${snap.mode}`;
+    const sel = $('sessionSel');
+    sel.innerHTML = snap.sessions.map(s => `<option value="${esc(s.id)}" ${s.id === state.selected ? 'selected' : ''}>${esc(s.id.slice(0, 8))} · ${esc(s.status)} · ${esc((s.cwd || '').split('/').pop() || '—')}</option>`).join('') || '<option>no sessions</option>';
+    const s = current();
+    renderTask(s); renderStages(s); renderCards(); renderFeed(s); renderTimeline(); tickClock();
+  }
+  function renderTask(s) {
+    const h = $('task');
+    if (!s) { h.textContent = 'Waiting for a session…'; h.className = 'empty'; $('sessionMeta').textContent = ''; return; }
+    if (s.task) { h.textContent = s.task.text; h.className = ''; } else { h.textContent = 'Session open, no task submitted yet…'; h.className = 'empty'; }
+    $('sessionMeta').textContent = `${s.id}  ·  ${s.cwd || 'cwd unknown'}  ·  ${s.status}`;
+    $('sAgents').textContent = s.counts.agents; $('sRunning').textContent = s.counts.running;
+    $('sTools').textContent = s.counts.tools; $('sErrors').textContent = s.counts.errors;
+    $('sErrors').className = `mono${s.counts.errors ? ' err' : ''}`;
+  }
+  function renderStages(s) {
+    $('stages').innerHTML = (s?.stages || []).map(st => `<li class="stage ${st.status}"><span class="pip"></span>${esc(st.label)}${st.agentIds.length ? `<small class="mono">${st.agentIds.length}</small>` : ''}</li>`).join('');
+  }
+  function cardHtml(a, desc, color) {
+    return `<div>
+        <div class="head"><span class="name">${esc(a.label)}</span><span class="status" data-f="status"></span><span class="chip" data-f="stage" hidden></span></div>
+        <div class="desc" data-f="desc">${esc(desc)}</div>
+        <div class="now mono" data-f="now"></div>
+      </div>
+      <div>
+        <div class="meta"><span>tools <b class="mono" data-f="tools"></b></span><span>errors <b class="mono" data-f="errors"></b></span><span>elapsed <b class="mono" data-f="elapsed"></b></span></div>
+        <div class="strip" data-f="strip"></div>
+      </div>`;
+  }
+  function setText(el, value) { if (el.textContent !== value) el.textContent = value; }
+  function setHtml(el, value) { if (el.innerHTML !== value) el.innerHTML = value; }
+  function updateCard(card, a, t) {
+    const f = name => card.querySelector(`[data-f="${name}"]`);
+    const cls = `card ${a.status}${a.id === 'main' ? ' main' : ''}${card.classList.contains('new') ? ' new' : ''}`;
+    if (card.className !== cls) card.className = cls;
+    const status = f('status');
+    setText(status, a.status);
+    const sc = `status ${a.status}`; if (status.className !== sc) status.className = sc;
+    const stage = f('stage');
+    if (a.stage) { setText(stage, a.stage); stage.hidden = false; } else stage.hidden = true;
+    const cur = a.currentTool;
+    const nowEl = f('now');
+    const nc = `now mono${cur ? '' : ' quiet'}`; if (nowEl.className !== nc) nowEl.className = nc;
+    setHtml(nowEl, cur ? `<span class="tool">${esc(cur.name)}</span><span class="tgt">${esc(cur.target || '')}</span>` : a.status === 'done' ? 'finished' : a.status === 'error' ? 'ended with error' : 'thinking…');
+    setText(f('tools'), String(a.toolCount));
+    setText(f('errors'), String(a.errorCount));
+    setText(f('elapsed'), fmtDur((a.endedAt || t) - a.startedAt));
+    setHtml(f('strip'), a.tools.slice(-28).map(tl => `<i style="--c:var(--${toolKind(tl.name, tl.status)})"></i>`).join(''));
+  }
+  function renderCards() {
+    const s = current();
+    const box = $('cards');
+    if (!s) {
+      box.innerHTML = `<div class="empty-board">No events yet. Install the tracker with <code>node scripts/agent-live-install.js --write</code>, restart Claude Code, then give it a task.<br/>Or try <code>npm run dashboard:live:demo</code>.</div>`;
+      box.dataset.session = '';
+      return;
+    }
+    if (box.dataset.session !== s.id) { box.innerHTML = ''; box.dataset.session = s.id; }
+    const t = now();
+    const wanted = new Set(s.agents.map(a => `card-${a.id}`));
+    for (const el of [...box.children]) if (!wanted.has(el.id)) el.remove();
+    s.agents.forEach((a, i) => {
+      let card = document.getElementById(`card-${a.id}`);
+      if (!card) {
+        card = document.createElement('article');
+        card.id = `card-${a.id}`;
+        card.classList.add('new');
+        card.style.setProperty('--agent', agentColor(a, i));
+        card.innerHTML = cardHtml(a, a.description || state.catalog[a.type] || (a.id === 'main' ? 'Orchestrates the task, spawns subagents, edits and commits.' : ''), agentColor(a, i));
+        card.addEventListener('animationend', () => card.classList.remove('new'), { once: true });
+      }
+      if (box.children[i] !== card) box.insertBefore(card, box.children[i] || null);
+      updateCard(card, a, t);
+    });
+  }
+  function tickElapsed() {
+    const s = current();
+    if (!s) return;
+    const t = now();
+    for (const a of s.agents) {
+      const el = document.querySelector(`#card-${CSS.escape(a.id)} [data-f="elapsed"]`);
+      if (el) setText(el, fmtDur((a.endedAt || t) - a.startedAt));
+    }
+  }
+  const feedKey = f => `${f.ts}|${f.agentId}|${f.text}`;
+  function renderFeed(s) {
+    const list = $('feed');
+    if (!s) { list.innerHTML = ''; list.dataset.session = ''; state.feedSeen = new Set(); return; }
+    if (list.dataset.session !== s.id) { list.innerHTML = ''; list.dataset.session = s.id; state.feedSeen = new Set(); }
+    const agents = s.agents;
+    const idx = Object.fromEntries(agents.map((a, i) => [a.id, i]));
+    const fresh = s.feed.filter(f => !state.feedSeen.has(feedKey(f)));
+    for (const f of fresh) {
+      state.feedSeen.add(feedKey(f));
+      const a = agents[idx[f.agentId]];
+      const color = a ? agentColor(a, idx[f.agentId]) : 'var(--ink-3)';
+      const li = document.createElement('li');
+      li.className = `${f.kind} new`;
+      li.innerHTML = `<time class="mono">${fmtTime(f.ts)}</time><span class="dot" style="background:${color}"></span><span class="t"><b>${esc(a ? a.label : f.agentId)}</b> · ${esc(f.text)}</span>`;
+      li.addEventListener('animationend', () => li.classList.remove('new'), { once: true });
+      list.prepend(li);
+    }
+    while (list.children.length > 80) list.lastElementChild.remove();
+  }
+  function renderTimeline() {
+    const s = current();
+    const host = $('tl');
+    if (!s) { host.innerHTML = ''; return; }
+    const W = Math.max(640, host.clientWidth || 900), LABEL = 150, ROW = 26, TOP = 22;
+    const H = TOP + s.agents.length * ROW + 10;
+    const t0 = s.startedAt;
+    const t1 = Math.max(s.endedAt || now(), ...s.agents.flatMap(a => a.tools.map(tl => tl.endedAt || now())), t0 + 5000);
+    const x = ts => LABEL + ((Math.min(Math.max(ts, t0), t1) - t0) / (t1 - t0)) * (W - LABEL - 12);
+    const span = t1 - t0;
+    const stepMs = [1e3, 5e3, 10e3, 30e3, 60e3, 300e3, 600e3, 1800e3].find(v => span / v <= 12) || 3600e3;
+    let grid = '';
+    for (let ts = t0; ts <= t1; ts += stepMs) grid += `<line class="grid" x1="${x(ts)}" x2="${x(ts)}" y1="${TOP - 6}" y2="${H}"/><text x="${x(ts) + 3}" y="${TOP - 10}">${fmtDur(ts - t0)}</text>`;
+    const rows = s.agents.map((a, i) => {
+      const y = TOP + i * ROW, color = agentColor(a, i);
+      const life = `<rect class="life" x="${x(a.startedAt)}" y="${y + 4}" width="${Math.max(2, x(a.endedAt || now()) - x(a.startedAt))}" height="${ROW - 8}" rx="4" style="--agent:${color}"/>`;
+      const bars = a.tools.map(tl => `<rect class="bar" x="${x(tl.startedAt)}" y="${y + 7}" width="${Math.max(2.5, x(tl.endedAt || now()) - x(tl.startedAt))}" height="${ROW - 14}" fill="var(--${toolKind(tl.name, tl.status)})"><title>${esc(tl.name)} ${esc(tl.target || '')} · ${fmtDur(tl.durationMs)}</title></rect>`).join('');
+      return `<rect class="lane" x="${LABEL}" y="${y + ROW / 2 - 0.5}" width="${W - LABEL - 12}" height="1"/><text class="label" x="0" y="${y + ROW / 2 + 4}">${esc(a.label.length > 18 ? a.label.slice(0, 17) + '…' : a.label)}</text>${life}${bars}`;
+    }).join('');
+    const nowline = s.endedAt ? '' : `<line class="nowline" x1="${x(now())}" x2="${x(now())}" y1="${TOP - 6}" y2="${H}"/>`;
+    host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Agent timeline">${grid}${rows}${nowline}</svg>`;
+  }
+})();
+</script>
+</body>
+</html>

@@ -83,6 +83,95 @@ Note: the demo scenario ends its session with a `session_end` event, so with
 `--demo --hide-ended` (or the toggle on) the board empties when the scenario
 finishes and fills again on the next `--loop` run.
 
+## Launcher
+
+Besides watching, the dashboard can **start** an ECC workflow for you. The
+header **Launch** button opens a drawer: pick a workflow (grouped, searchable),
+describe the task, choose the project folder, choose *Plan only* or *Can edit
+files*, then **Start run**. The run appears on the live board as soon as its
+first hook event arrives, with a control panel above the agents.
+
+```bash
+claude auth login                 # once: the launcher drives the `claude` CLI, so it must be signed in
+npm run dashboard:live:launch     # same as: node scripts/agent-live-dashboard.js --launch
+```
+
+Without `--launch` (or `ECC_LIVE_LAUNCH=1`) the server stays strictly
+read-only: every write endpoint answers 403 and the drawer explains how to
+enable it. `--demo` never enables launching.
+
+### How a run works
+
+- The server spawns `claude -p` (no shell) in the folder you chose with a
+  pre-assigned `--session-id`, so the run and its hook-driven session share one id.
+- The prompt goes to the child on **stdin**, never argv. It is a fixed template:
+  *follow the ECC workflow defined in `<repo>/commands/<name>.md` for the task
+  below, honor its human gates*. Workflows are therefore found by file, so they
+  work in any project, whether or not ECC is installed there.
+- **Gates.** Headless runs cannot ask questions, so an `orch-*` workflow ends its
+  turn at each gate. The panel then offers **Approve plan & continue**,
+  **Confirm commit**, or a free-text reply. Each one resumes the same session
+  with `--resume`, in the original folder. Approve and Confirm raise the mode to
+  *Can edit files*; that click is the only way a run escalates from plan mode.
+- **Stop** sends SIGTERM to the run's process group, then SIGKILL after 5 s.
+- Runs live in memory. Restarting the dashboard stops them and forgets them.
+
+### Safety model
+
+| Control | Behaviour |
+|---------|-----------|
+| Opt-in | Writes are off unless `--launch` / `ECC_LIVE_LAUNCH=1` |
+| Origin | Host must be loopback; writes need an Origin that equals `http://<Host>` exactly, port included (or `Sec-Fetch-Site: same-origin` when Origin is absent) |
+| CSRF | `Content-Type: application/json` plus a per-start random token (`X-ECC-Live-Token`) embedded in the page; run data (`GET /api/launch/runs...`) needs the token too |
+| Crash safety | Malformed request targets get 400. SSE streams are capped at 16. On exit, crash, SIGTERM or SIGHUP every run's process group is killed before the dashboard goes away |
+| Page hardening | CSP with a per-response script nonce, `X-Frame-Options: DENY`, `frame-ancestors 'none'` |
+| Permissions | Only `plan` and `acceptEdits`. Never `bypassPermissions`, `auto` or `dontAsk` |
+| Folders | Absolute, existing, realpath'd, inside `ECC_LIVE_ALLOWED_ROOTS` (default: your home folder). Never a system directory, never the home folder itself, never `~/Library`, never any hidden folder (`.ssh`, `.claude`, `.config`, `.git`…). Every failure returns the same generic error so folders cannot be probed |
+| Environment | The child gets an allowlist only (PATH, HOME, LANG, TERM, proxy and TLS vars, `ANTHROPIC_*`, `CLAUDE_*`, `ECC_*`). `GITHUB_TOKEN`, `AWS_*`, `OPENAI_API_KEY` and the rest are not passed |
+| ECC checkout | When the folder is outside this checkout, the run gets `--add-dir` for it (so skills can be read) plus deny rules for Edit/Write on it. Commands whose real path escapes `commands/` are skipped. Bash can still write, so this is defense in depth |
+| Escalation | Leaving plan mode on a follow-up needs `confirmEscalation: true` (the UI sends it only from the Approve/Confirm buttons or the explicit edit-mode choice). The stored folder is re-validated on every follow-up |
+| Commands | Only names found in this repo's `commands/` |
+| Limits | 3 concurrent runs, 60 min timeout, 8000-char task, 16 KB request body, bounded logs |
+| Output | Results and stderr are redacted (passwords, API keys, Bearer, Slack and JWT tokens, AWS keys, PEM blocks) and clipped; env and prompts are never returned |
+
+`acceptEdits` lets Claude change files in the chosen folder without asking.
+Work on a git branch. Headless runs cannot approve extra tool use, so steps
+that need Bash (tests, `git commit`) can stall unless your Claude settings
+already allow them.
+
+### Environment
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `ECC_LIVE_LAUNCH` | off | `1` enables launching |
+| `ECC_LIVE_ALLOWED_ROOTS` | `$HOME` | colon-separated folders runs may use |
+| `ECC_LIVE_MAX_BUDGET_USD` | unset | passed to `claude --max-budget-usd`; not settable from the browser |
+
+### API
+
+| Method and path | Purpose |
+|-----------------|---------|
+| `GET /api/launch/catalog` | `{enabled, items, permissionModes, maxConcurrent}` |
+| `POST /api/launch/runs` | `{command, task, cwd, permissionMode, model?}` returns `201 {run}` |
+| `POST /api/launch/runs/:id/follow-up` | `{message, permissionMode?, confirmEscalation?}` returns `202 {run}` |
+| `POST /api/launch/runs/:id/stop` | returns `202 {run}`; an empty body is fine |
+| `GET /api/launch/runs`, `GET /api/launch/runs/:id` | run summaries and detail; require the token header |
+
+Errors are `{error, code}`: 400 validation (`bad_cwd`, `escalation_unconfirmed`…),
+403 guard or disabled, 404 unknown, 409 wrong state, 413 body over 64 KB,
+415 content type, 429 too many runs. A run that hits its 60 minute limit ends
+as `failed` with "Timed out" in its stderr.
+
+### Known limits
+
+- The token is readable by any process on your computer that can reach the
+  loopback port. The boundary is your browser's same-origin rules plus the Host
+  check, so do not enable `--launch` on a shared machine.
+- Not supported on Windows: `--launch` refuses to start there.
+- Cloud providers that rely on `AWS_*` or `GOOGLE_*` variables need them added
+  to the allowlist in `agent-live-runner-process.js`.
+- The Edit/Write deny rule syntax could not be verified without a signed-in CLI.
+
 ## What is captured
 
 | Claude Code event | Stored as | Used for |
@@ -115,6 +204,10 @@ useful, but its tool calls will appear under the main session.
 | `scripts/agent-live-ui.html` | single-file UI, light/dark, reduced-motion aware |
 | `scripts/lib/agent-live-demo.js` | scripted scenario used by `--demo` |
 | `scripts/agent-live-install.js` | print / merge / remove settings.json hook entries |
+| `scripts/agent-live-launcher-ui.html` | Launcher drawer and run control panel, injected into the UI |
+| `scripts/lib/agent-live-launch-*.js` | catalog, validators, write guard, routes |
+| `scripts/lib/agent-live-runner*.js`, `agent-live-redact.js` | spawns and supervises `claude -p` runs, secret redaction |
+| `scripts/lib/agent-live-launch-wiring.js` | runner, routes, token, CSP and page rendering for the server |
 | `tests/lib/agent-live-state.test.js`, `tests/hooks/agent-live-tracker.test.js`, `tests/scripts/agent-live-dashboard.test.js` | tests |
 
 ## Environment

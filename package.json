@@ -506,7 +506,8 @@
     "dashboard:web": "node scripts/dashboard-web.js",
     "dashboard:live": "node scripts/agent-live-dashboard.js",
     "dashboard:live:demo": "node scripts/agent-live-dashboard.js --demo --loop",
-    "dashboard:live:install": "node scripts/agent-live-install.js --write"
+    "dashboard:live:install": "node scripts/agent-live-install.js --write",
+    "dashboard:live:launch": "node scripts/agent-live-dashboard.js --launch"
   },
   "dependencies": {
     "@iarna/toml": "2.2.5",

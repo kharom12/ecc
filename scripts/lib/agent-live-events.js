@@ -7,6 +7,7 @@
  */
 
 const { stripAnsi } = require('./utils');
+const { redactSecrets } = require('./agent-live-redact');
 
 const PROMPT_LIMIT = 400;
 const TARGET_LIMIT = 160;
@@ -46,16 +47,9 @@ const CURSOR_EVENT_TYPES = Object.freeze({
   stop: { type: 'stop' }
 });
 
+/** One-line redaction for short targets: collapses all whitespace, then masks secrets. */
 function redact(value) {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .replace(/--token[= ][^ ]*/g, '--token=<REDACTED>')
-    .replace(/Authorization:[: ]*[^ ]*[: ]*[^ ]*/gi, 'Authorization:<REDACTED>')
-    .replace(/\b(AKIA|ASIA)[A-Z0-9]{16}\b/g, '<REDACTED>')
-    .replace(/password[= ][^ ]*/gi, 'password=<REDACTED>')
-    .replace(/\b(ghp|gho|ghs)_[A-Za-z0-9_]+\b/g, '<REDACTED>')
-    .replace(/\bgithub_pat_[A-Za-z0-9_]+\b/g, '<REDACTED>')
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '<REDACTED>');
+  return redactSecrets(String(value || '').replace(/\s+/g, ' '));
 }
 
 function clip(value, limit) {
@@ -191,7 +185,10 @@ module.exports = {
   CLAUDE_EVENT_TYPES,
   CURSOR_EVENT_TYPES,
   HARNESSES,
+  clip,
   describeTarget,
   detectHarness,
-  normalizeEvents
+  normalizeEvents,
+  redact,
+  redactSecrets
 };

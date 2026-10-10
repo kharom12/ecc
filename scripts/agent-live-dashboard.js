@@ -8,6 +8,7 @@
  *   node scripts/agent-live-dashboard.js [--port 3457] [--file <events.jsonl>]
  *   node scripts/agent-live-dashboard.js --demo [--loop]     # scripted feature task
  *   node scripts/agent-live-dashboard.js --hide-ended         # omit ended sessions from the stream
+ *   node scripts/agent-live-dashboard.js --launch             # enable the Launcher (start/stop ECC workflows from the UI)
  *
  * Open http://127.0.0.1:3457
  */
@@ -27,6 +28,7 @@ const {
 const { buildSnapshot } = require('./lib/agent-live-state');
 const { getEventsPath } = require('./hooks/agent-live-tracker');
 const { playScenario } = require('./lib/agent-live-demo');
+const { createLauncher } = require('./lib/agent-live-launch-wiring');
 
 const ROOT = path.resolve(__dirname, '..');
 const UI_PATH = path.join(__dirname, 'agent-live-ui.html');
@@ -49,6 +51,7 @@ function parseArgs(argv) {
     demo: args.includes('--demo'),
     loop: args.includes('--loop'),
     hideEnded: args.includes('--hide-ended'),
+    launch: args.includes('--launch') || /^(1|true|yes)$/i.test(String(process.env.ECC_LIVE_LAUNCH || '')),
     help: args.includes('--help') || args.includes('-h')
   };
 }
@@ -161,6 +164,9 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
+const MAX_SSE_CLIENTS = 16;
+const SHUTDOWN_GRACE_MS = 1500;
+
 function createServer(options) {
   const host = resolveHost();
   const allowedHosts = buildAllowedHostnames(host);
@@ -170,12 +176,30 @@ function createServer(options) {
   const clients = new Set();
   const eventsPath = options.eventsPath;
   const tail = createTail(eventsPath, { onReset: () => store.reset() });
-  const buildPayload = () => ({ ...store.snapshot(), mode: options.demo ? 'demo' : 'live', source: eventsPath, hideEnded });
+  let launcher = null;
+  const buildPayload = () => ({
+    ...store.snapshot(),
+    mode: options.demo ? 'demo' : 'live',
+    source: eventsPath,
+    hideEnded,
+    launcher: launcher ? launcher.routes.summarize() : { enabled: false, runs: [] }
+  });
 
   const broadcast = () => {
     const payload = `data: ${JSON.stringify(buildPayload())}\n\n`;
     for (const client of clients) client.write(payload);
   };
+
+  launcher = createLauncher({
+    enabled: Boolean(options.launch) && !options.demo,
+    root: ROOT,
+    eventsPath,
+    allowedHosts: Array.from(allowedHosts),
+    onChange: broadcast,
+    runner: options.runner,
+    roots: options.allowedRoots
+  });
+  const runner = launcher.runner;
 
   const pump = () => {
     const sizeBefore = store.size();
@@ -194,9 +218,19 @@ function createServer(options) {
       sendJson(res, 403, { error: 'loopback only' });
       return;
     }
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    let url;
+    try {
+      url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    } catch {
+      sendJson(res, 400, { error: 'bad request target' });
+      return;
+    }
 
     if (url.pathname === '/events') {
+      if (clients.size >= MAX_SSE_CLIENTS) {
+        sendJson(res, 503, { error: 'too many dashboard streams open' });
+        return;
+      }
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-store',
@@ -215,6 +249,14 @@ function createServer(options) {
       sendJson(res, 200, catalog);
       return;
     }
+    if (url.pathname.startsWith('/api/launch/')) {
+      launcher.routes.handle(req, res, url).catch(error => {
+        console.error('[AgentLive] launch route failed:', String(error && error.message).slice(0, 200));
+        if (!res.headersSent) sendJson(res, 500, { error: 'internal error', code: 'internal' });
+        else res.end();
+      });
+      return;
+    }
     if (url.pathname === '/' || url.pathname === '/index.html') {
       let html;
       try {
@@ -223,24 +265,29 @@ function createServer(options) {
         sendJson(res, 500, { error: `UI not found: ${error.message}` });
         return;
       }
+      const nonce = launcher.newNonce();
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
-        'Referrer-Policy': 'no-referrer'
+        'X-Frame-Options': 'DENY',
+        'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': launcher.buildCsp(nonce)
       });
-      res.end(html);
+      res.end(launcher.renderPage(html, nonce));
       return;
     }
     sendJson(res, 404, { error: 'not found' });
   });
 
   server.on('close', () => {
+    if (runner) runner.stopAll();
     clearInterval(heartbeat);
+    for (const client of clients) client.end();
     fs.unwatchFile(eventsPath, pump);
   });
 
-  return { server, host, store, pump };
+  return { server, host, store, pump, runner, launcher };
 }
 
 function startDemo(eventsPath, loop) {
@@ -256,8 +303,13 @@ function startDemo(eventsPath, loop) {
 function main() {
   const args = parseArgs(process.argv);
   if (args.help) {
-    console.log('Usage: node scripts/agent-live-dashboard.js [--port N] [--file events.jsonl] [--demo] [--loop] [--hide-ended]');
+    console.log('Usage: node scripts/agent-live-dashboard.js [--port N] [--file events.jsonl] [--demo] [--loop] [--hide-ended] [--launch]');
     return;
+  }
+
+  if (args.launch && process.platform === 'win32') {
+    console.error('[AgentLive] --launch is not supported on Windows yet (no process-group control). Run the dashboard without it.');
+    process.exit(1);
   }
 
   const eventsPath = args.demo
@@ -266,7 +318,7 @@ function main() {
 
   if (!args.demo) fs.mkdirSync(path.dirname(eventsPath), { recursive: true });
   const stopDemo = args.demo ? startDemo(eventsPath, args.loop) : () => {};
-  const { server, host } = createServer({ eventsPath, demo: args.demo, hideEnded: args.hideEnded });
+  const { server, host, runner, launcher } = createServer({ eventsPath, demo: args.demo, hideEnded: args.hideEnded, launch: args.launch });
 
   server.listen(args.port, host, () => {
     const shownHost = host === '::1' ? '[::1]' : host;
@@ -274,6 +326,12 @@ function main() {
     console.log(`[AgentLive] tailing ${eventsPath}`);
     if (args.hideEnded) {
       console.log(`[AgentLive] --hide-ended: ended sessions are omitted from the stream${args.demo ? ' (the demo session ends, so the board empties when the scenario finishes)' : ''}`);
+    }
+    if (args.launch && args.demo) console.log('[AgentLive] --launch is ignored in --demo mode');
+    if (runner) {
+      console.log('[AgentLive] LAUNCHER ENABLED: the browser UI can start Claude runs (permission modes: plan, acceptEdits) inside your allowed folders');
+      if (launcher.roots.length === 0) console.warn('[AgentLive] WARNING: no valid allowed folders. Check ECC_LIVE_ALLOWED_ROOTS; every launch will be refused.');
+      else console.log(`[AgentLive] allowed folders: ${launcher.roots.join(', ')}`);
     }
     if (!args.demo) {
       console.log('[AgentLive] no events yet? run: node scripts/agent-live-install.js --write  (then restart Claude Code)');
@@ -284,9 +342,18 @@ function main() {
     process.exit(1);
   });
 
-  const shutdown = () => {
+  // Run children are detached, so the dashboard must never exit while one still runs:
+  // ask politely first, then SIGKILL every process group before exiting.
+  let closing = false;
+  const shutdown = async () => {
+    if (closing) return;
+    closing = true;
     stopDemo();
-    server.close(() => process.exit(0));
+    if (runner) {
+      const settled = Promise.resolve(runner.stopAll()).catch(() => {});
+      await Promise.race([settled, new Promise(resolve => setTimeout(resolve, SHUTDOWN_GRACE_MS))]);
+      if (typeof runner.killAllNow === 'function') runner.killAllNow();
+    }
     if (args.demo) {
       try {
         fs.unlinkSync(eventsPath);
@@ -294,7 +361,18 @@ function main() {
         // Already gone.
       }
     }
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 1000).unref();
   };
+  const crash = label => error => {
+    console.error(`[AgentLive] ${label}:`, String(error && error.message ? error.message : error).slice(0, 300));
+    if (runner && typeof runner.killAllNow === 'function') runner.killAllNow();
+    process.exit(1);
+  };
+  process.on('uncaughtException', crash('uncaught exception'));
+  process.on('unhandledRejection', crash('unhandled rejection'));
+  process.on('exit', () => { if (runner && typeof runner.killAllNow === 'function') runner.killAllNow(); });
+  process.on('SIGHUP', shutdown);
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
